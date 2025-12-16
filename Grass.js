@@ -10,9 +10,11 @@ export class GrassSystem {
   constructor(scene, getTerrainHeight) {
     this.uniforms = { 
       uTime: { value: 0 }, 
-      uPlayerPos: { value: new THREE.Vector3(0, -100, 0) } 
+      uPlayerPos: { value: new THREE.Vector3(0, -100, 0) },
+      uPlayerVel: { value: new THREE.Vector3(0, 0, 0) }
     };
     
+    this.lastPlayerPos = new THREE.Vector3(0, -100, 0);
     this.mesh = this.createGrassMesh(getTerrainHeight);
     scene.add(this.mesh);
   }
@@ -55,6 +57,7 @@ export class GrassSystem {
       onBeforeCompile: (shader) => {
         shader.uniforms.uTime = this.uniforms.uTime;
         shader.uniforms.uPlayerPos = this.uniforms.uPlayerPos;
+        shader.uniforms.uPlayerVel = this.uniforms.uPlayerVel;
         
         // --- NOISE FUNCTIONS FOR WIND ---
         const noiseChunks = `
@@ -90,6 +93,7 @@ export class GrassSystem {
         shader.vertexShader = `
           uniform float uTime;
           uniform vec3 uPlayerPos;
+          uniform vec3 uPlayerVel;
           varying float vHeight;
           varying vec3 vInstanceColor;
           varying vec3 vWorldPosition;
@@ -123,20 +127,35 @@ export class GrassSystem {
 
           // --- PLAYER INTERACTION ---
           float dist = distance(worldPos.xz, uPlayerPos.xz);
-          // Reduced radius to match feet better (0.65)
-          float radius = 0.65;
+          // Tighter radius for more realistic foot placement feeling (was 0.65)
+          float radius = 0.4;
+          
           if(dist < radius){
-             float push = 1.0 - smoothstep(0.0, radius, dist);
-             push = pow(push, 2.0); // Non-linear falloff for impact feel
+             // Sharper falloff to avoid large "dents" in the terrain, creates a solid trampled feel
+             float effect = 1.0 - smoothstep(radius * 0.1, radius, dist);
+             effect = pow(effect, 2.5); 
              
-             vec2 dir = normalize(worldPos.xz - uPlayerPos.xz);
+             // Calculate Direction Vectors
+             vec2 pVel = uPlayerVel.xz;
+             float speed = length(pVel);
+             vec2 moveDir = (speed > 0.1) ? normalize(pVel) : vec2(0.0);
              
-             // Strong push away
-             transformed.x += dir.x * push * 2.0 * vHeight;
-             transformed.z += dir.y * push * 2.0 * vHeight;
+             vec2 diff = worldPos.xz - uPlayerPos.xz;
+             vec2 radialDir = length(diff) > 0.001 ? normalize(diff) : vec2(0.0);
              
-             // Flatten
-             transformed.y *= (1.0 - push * 0.8);
+             // Logic: If moving fast, grass is trampled in direction of movement.
+             // If standing still, grass is pushed radially outward slightly.
+             float moveInfluence = smoothstep(0.0, 3.0, speed);
+             vec2 pushDir = mix(radialDir, moveDir, moveInfluence * 0.85);
+             
+             // Apply Forces
+             // 1. Crush Down (Vertical) - Strong flattening to simulate weight
+             transformed.y *= (1.0 - effect * 0.95);
+             
+             // 2. Push Horizontal - Reduced magnitude to stop "force field" look.
+             // Just enough to show the grass bending under/away from the boot.
+             transformed.x += pushDir.x * effect * 0.6 * vHeight;
+             transformed.z += pushDir.y * effect * 0.6 * vHeight;
           }
 
           // --- NORMAL TWEAKING (For fake volume lighting) ---
@@ -242,10 +261,19 @@ export class GrassSystem {
     return mesh;
   }
 
-  update(time, playerPosition) {
+  update(time, dt, playerPosition) {
     this.uniforms.uTime.value = time;
     if (playerPosition) {
+      // Calculate velocity for directional trampling
+      if (dt > 0.0001) {
+        const vel = new THREE.Vector3()
+          .subVectors(playerPosition, this.lastPlayerPos)
+          .divideScalar(dt);
+        this.uniforms.uPlayerVel.value.copy(vel);
+      }
+      
       this.uniforms.uPlayerPos.value.copy(playerPosition);
+      this.lastPlayerPos.copy(playerPosition);
     }
   }
 }

@@ -186,7 +186,7 @@ export default function WebGPUTerrainDemo() {
 
           // removed inline Grass updates
           // replaced with system update
-          grassSystem.update(time, player.getPosition());
+          grassSystem.update(time, deltaTime * 0.001, player.getPosition());
 
           // removed inline Character/Camera logic
           // replaced with player update
