@@ -30,6 +30,8 @@ export default function WebGPUTerrainDemo() {
     
     let clickMarker;
     let cleanupClick;
+
+    let zoomLevel = 1.0;
     
     let animationId;
     let time = 0;
@@ -162,8 +164,18 @@ export default function WebGPUTerrainDemo() {
         }
         
         renderer.domElement.addEventListener('pointerdown', onPointerDown);
+
+        const onWheel = (e) => {
+           // Zoom limits: 0.3 (close) to 1.5 (far)
+           zoomLevel += e.deltaY * 0.001;
+           zoomLevel = Math.max(0.3, Math.min(zoomLevel, 1.5));
+           e.preventDefault();
+        };
+        window.addEventListener('wheel', onWheel, { passive: false });
+
         cleanupClick = () => {
           if (renderer.domElement) renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+          window.removeEventListener('wheel', onWheel);
         };
 
         // Animation Loop
@@ -191,7 +203,8 @@ export default function WebGPUTerrainDemo() {
             fpsTime = 0;
           }
 
-          // Player update first to ensure correct position for grass
+          // Update player zoom
+          player.setZoom(zoomLevel);
           player.update(deltaTime * 0.001, camera);
 
           // Update Sun to follow player for high quality shadows everywhere
@@ -203,8 +216,14 @@ export default function WebGPUTerrainDemo() {
              sun.target.updateMatrixWorld();
           }
 
+          // Calculate Dynamic LOD based on zoom
+          // Default (zoom 1.0) -> High: 128, Low: 256
+          // Close (zoom 0.5) -> High: 64, Low: 128
+          const lodHigh = 128 * zoomLevel;
+          const lodLow = 256 * zoomLevel;
+
           // Grass update with current player position
-          grassSystem.update(time, deltaTime * 0.001, player.getPosition(), camera);
+          grassSystem.update(time, deltaTime * 0.001, player.getPosition(), camera, lodHigh, lodLow);
           
           // Hide marker if player stopped
           if (!player.isMoving) {

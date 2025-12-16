@@ -11,6 +11,11 @@ export class Player {
     this.actions = {};
     this.currentAction = null;
     this.moveTarget = null;
+    this.zoom = 1.0;
+  }
+
+  setZoom(zoom) {
+    this.zoom = zoom;
   }
 
   async load() {
@@ -105,7 +110,7 @@ export class Player {
   }
 
   updateCamera(camera) {
-    const idealOffset = new THREE.Vector3(0, 8, -12);
+    const idealOffset = new THREE.Vector3(0, 8 * this.zoom, -12 * this.zoom);
     idealOffset.applyQuaternion(this.container.quaternion);
     idealOffset.add(this.container.position);
 

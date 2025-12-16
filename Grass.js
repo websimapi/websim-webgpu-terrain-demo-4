@@ -352,7 +352,7 @@ export class GrassSystem {
     }
   }
 
-  update(time, dt, playerPosition, camera) {
+  update(time, dt, playerPosition, camera, lodHigh = 128, lodLow = 256) {
     this.uniforms.uTime.value = time;
     
     if (playerPosition) {
@@ -383,15 +383,11 @@ export class GrassSystem {
     }
 
     if (playerPosition) {
-      this.updateLOD(playerPosition);
+      this.updateLOD(playerPosition, lodHigh, lodLow);
     }
   }
 
-  updateLOD(playerPosition) {
-    // LOD Settings
-    const distHigh = 128;
-    const distLow = 256;
-    
+  updateLOD(playerPosition, distHigh, distLow) {
     // Reuse vector to prevent garbage collection
     const chunkPos = new THREE.Vector3();
     const centerPos = new THREE.Vector3(playerPosition.x, 0, playerPosition.z);
