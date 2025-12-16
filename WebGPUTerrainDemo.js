@@ -101,7 +101,7 @@ export default function WebGPUTerrainDemo() {
 
         // removed inline Grass Generation logic
         // replaced with module call
-        grassSystem = new GrassSystem(scene, getTerrainHeight);
+        grassSystem = new GrassSystem(scene, getTerrainHeight, renderer);
 
         // removed inline Fireflies logic
         // replaced with module call
