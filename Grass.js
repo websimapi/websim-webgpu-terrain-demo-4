@@ -8,12 +8,13 @@ function noise(x, z) {
 
 const GRASS_VERTEX_LOGIC = `
   vec3 transformed = vec3( position );
-  vHeight = uv.y;
+  // Height calculated from position to avoid UV dependency in shadow pass
+  vHeight = position.y / 0.8; 
 
   vec4 instancePosition = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+  // Root position of the grass blade for interaction
   vec3 worldPos = (modelMatrix * instancePosition).xyz;
-  vWorldPosition = worldPos;
-
+  
   // --- PLAYER INTERACTION ---
   vec2 mapUV = (worldPos.xz + (uTerrainSize * 0.5)) / uTerrainSize;
   mapUV = clamp(mapUV, 0.0, 1.0);
@@ -232,8 +233,6 @@ export class GrassSystem {
         uniform sampler2D uTrailMap;
         uniform float uTerrainSize;
         varying float vHeight;
-        varying vec3 vWorldPosition;
-        varying vec3 vInstanceColor;
         ${shader.vertexShader}
       `;
 
@@ -255,8 +254,8 @@ export class GrassSystem {
 
         shader.fragmentShader = `
           varying float vHeight;
-          varying vec3 vInstanceColor;
-          // vWorldPosition is available from patchShader
+          // vColor is provided by Three.js when USE_INSTANCING_COLOR is active
+          // vWorldPosition is provided by MeshStandardMaterial
         ` + shader.fragmentShader;
 
         // Custom Color & Gradient Mapping
@@ -273,8 +272,8 @@ export class GrassSystem {
           vec3 gradient = mix(rootColor, midColor, smoothstep(0.0, 0.4, vHeight));
           gradient = mix(gradient, tipColor, smoothstep(0.4, 1.0, vHeight));
           
-          // Variation from instance noise
-          float noise = vInstanceColor.r;
+          // Variation from instance noise (stored in vColor)
+          float noise = vColor.r;
           vec3 finalColor = mix(gradient, dryColor, noise * 0.25 + (1.0-vHeight)*0.05);
 
           // Deep AO at root
@@ -340,14 +339,13 @@ export class GrassSystem {
           `
         );
 
-        // Inject vInstanceColor support in vertex for main material
+        // vColor is handled automatically by Three.js for InstancedMesh
+        // We just need to inject our height calculation
         shader.vertexShader = shader.vertexShader.replace(
-           'varying vec3 vWorldPosition;',
-           'varying vec3 vWorldPosition; varying vec3 vInstanceColor;'
-        );
-        shader.vertexShader = shader.vertexShader.replace(
-           'vHeight = uv.y;',
-           'vHeight = uv.y; vInstanceColor = instanceColor;'
+           '#include <begin_vertex>',
+           `#include <begin_vertex>
+            vHeight = position.y / 0.8;
+           `
         );
       }
     });
@@ -364,7 +362,7 @@ export class GrassSystem {
   initChunks() {
     const terrainSize = 200;
     const chunkSize = 25; // Break into 8x8 grid (64 chunks)
-    const density = 250; // High density (approx 2x previous)
+    const density = 250; 
     
     // Pre-allocate temporary objects
     const dummy = new THREE.Object3D();
