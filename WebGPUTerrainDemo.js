@@ -184,13 +184,11 @@ export default function WebGPUTerrainDemo() {
             fpsTime = 0;
           }
 
-          // removed inline Grass updates
-          // replaced with system update
-          grassSystem.update(time, deltaTime * 0.001, player.getPosition());
-
-          // removed inline Character/Camera logic
-          // replaced with player update
+          // Player update first to ensure correct position for grass
           player.update(deltaTime * 0.001, camera);
+
+          // Grass update with current player position
+          grassSystem.update(time, deltaTime * 0.001, player.getPosition());
           
           // Hide marker if player stopped
           if (!player.isMoving) {

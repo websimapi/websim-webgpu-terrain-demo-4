@@ -54,7 +54,7 @@ export class GrassSystem {
 
     // 4. "Brush" - The player's footprint influence
     // Smaller brush for accurate feet position
-    const brushGeo = new THREE.PlaneGeometry(0.5, 0.5); 
+    const brushGeo = new THREE.PlaneGeometry(0.8, 0.8); 
     const brushMat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
@@ -191,11 +191,12 @@ export class GrassSystem {
           
           // 2. Immediate Interaction
           float dist = distance(worldPos.xz, uPlayerPos.xz);
-          float radius = 0.35; 
+          float radius = 0.45; 
           float immediatePush = 1.0 - smoothstep(0.0, radius, dist);
           immediatePush = pow(immediatePush, 1.5);
           
           float totalEffect = max(trailValue, immediatePush);
+          totalEffect = clamp(totalEffect, 0.0, 1.0);
 
           // --- WIND ANIMATION ---
           float time = uTime * 0.6;
