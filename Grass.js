@@ -352,7 +352,7 @@ export class GrassSystem {
     }
   }
 
-  update(time, dt, playerPosition, camera, lodHigh = 128, lodLow = 256) {
+  update(time, dt, playerPosition, camera, sunDirection, lodHigh = 128, lodLow = 256) {
     this.uniforms.uTime.value = time;
     
     if (playerPosition) {
@@ -382,37 +382,81 @@ export class GrassSystem {
       this.lastPlayerPos.copy(playerPosition);
     }
 
-    if (playerPosition) {
-      this.updateLOD(playerPosition, lodHigh, lodLow);
+    if (playerPosition && camera) {
+      this.updateLOD(playerPosition, camera, lodHigh, lodLow);
     }
   }
 
-  updateLOD(playerPosition, distHigh, distLow) {
-    // Reuse vector to prevent garbage collection
-    const chunkPos = new THREE.Vector3();
-    const centerPos = new THREE.Vector3(playerPosition.x, 0, playerPosition.z);
+  updateLOD(playerPosition, camera, distHigh, distLow) {
+    const px = playerPosition.x;
+    const pz = playerPosition.z;
 
-    // Check visibility frustum (optional, InstancedMesh does it too, but we can skip logic)
-    // For now, distance based LOD
+    // Get camera forward direction projected on XZ
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    fwd.y = 0;
+    fwd.normalize();
+    const fx = fwd.x;
+    const fz = fwd.z;
+
+    // Calculate LOD Oval Centers
+    // We shift the center of the LOD area forward so the "edge" is just behind the camera
+    // and the majority of the detail is projected in front.
     
-    for (let chunk of this.chunks) {
-      chunkPos.copy(chunk.center);
-      chunkPos.y = 0; // Ignore height diff for LOD rings
-      const dist = chunkPos.distanceTo(centerPos);
+    // High Detail: Shift significantly forward
+    const shiftHigh = distHigh * 0.75; 
+    const chx = px + fx * shiftHigh;
+    const chz = pz + fz * shiftHigh;
 
-      if (dist < distHigh) {
-        // High Quality: Both meshes visible
+    // Low Detail: Shift moderately
+    const shiftLow = distLow * 0.4;
+    const clx = px + fx * shiftLow;
+    const clz = pz + fz * shiftLow;
+
+    // Aspect ratio > 1.0 compresses the width, making the field an oval
+    const aspect = 1.4; 
+
+    for (let chunk of this.chunks) {
+      const cx = chunk.center.x;
+      const cz = chunk.center.z;
+
+      // --- High LOD Check ---
+      const dxH = cx - chx;
+      const dzH = cz - chz;
+      
+      // Project vector onto forward axis
+      const fDistH = dxH * fx + dzH * fz;
+      
+      // Project vector onto right axis (rejection)
+      const sxH = dxH - fx * fDistH;
+      const szH = dzH - fz * fDistH;
+      
+      // Elliptical distance: (forward)^2 + (side * aspect)^2
+      const dSqH = fDistH*fDistH + (sxH*sxH + szH*szH) * aspect * aspect;
+      
+      const isHigh = dSqH < (distHigh * distHigh);
+
+      if (isHigh) {
         chunk.meshBase.visible = true;
         chunk.meshDetail.visible = true;
-      } else if (dist < distLow) {
-        // Medium Quality: Only base mesh
-        chunk.meshBase.visible = true;
-        chunk.meshDetail.visible = false;
-      } else {
-        // Low Quality: Nothing visible
-        chunk.meshBase.visible = false;
-        chunk.meshDetail.visible = false;
+        continue;
       }
+
+      // --- Low LOD Check ---
+      const dxL = cx - clx;
+      const dzL = cz - clz;
+      
+      const fDistL = dxL * fx + dzL * fz;
+      const sxL = dxL - fx * fDistL;
+      const szL = dzL - fz * fDistL;
+      
+      // Slightly wider oval for low LOD background
+      const aspectLow = aspect * 0.8;
+      const dSqL = fDistL*fDistL + (sxL*sxL + szL*szL) * aspectLow * aspectLow;
+      
+      const isLow = dSqL < (distLow * distLow);
+
+      chunk.meshBase.visible = isLow;
+      chunk.meshDetail.visible = false;
     }
   }
 }
