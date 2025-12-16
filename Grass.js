@@ -86,7 +86,7 @@ export class GrassSystem {
     const fadeMat = new THREE.MeshBasicMaterial({
       color: 0x000000,
       transparent: true,
-      opacity: 0.05, // Slightly faster recovery
+      opacity: 0.015, // Slower, more natural recovery over time
       side: THREE.DoubleSide
     });
     this.fadeQuad = new THREE.Mesh(fadeGeo, fadeMat);
@@ -181,39 +181,44 @@ export class GrassSystem {
           vec3 worldPos = (modelMatrix * instancePosition).xyz;
           vWorldPosition = worldPos;
 
+          // --- PLAYER INTERACTION (Calculated first to modulate wind) ---
+          
+          // 1. Sample Trail Map (Persistent displacement)
+          vec2 mapUV = (worldPos.xz + (uTerrainSize * 0.5)) / uTerrainSize;
+          mapUV = clamp(mapUV, 0.0, 1.0);
+          mapUV.y = 1.0 - mapUV.y; 
+          float trailValue = texture2D(uTrailMap, mapUV).r;
+          
+          // 2. Immediate Interaction
+          float dist = distance(worldPos.xz, uPlayerPos.xz);
+          float radius = 0.35; 
+          float immediatePush = 1.0 - smoothstep(0.0, radius, dist);
+          immediatePush = pow(immediatePush, 1.5);
+          
+          float totalEffect = max(trailValue, immediatePush);
+
           // --- WIND ANIMATION ---
           float time = uTime * 0.6;
           float swell = snoise(worldPos.xz * 0.03 + time * 0.4); 
           float flutter = snoise(worldPos.xz * 1.0 + time * 2.0); 
-          float windForce = swell * 0.8 + flutter * 0.3;
+          
+          // Dampen wind where grass is trampled so it doesn't slide on ground
+          float windDampen = 1.0 - clamp(totalEffect * 1.2, 0.0, 1.0);
+          float windForce = (swell * 0.8 + flutter * 0.3) * windDampen;
           
           float bend = pow(vHeight, 2.0); 
           transformed.x += windForce * bend * 0.4; 
           transformed.z += windForce * bend * 0.2;
           
-          // --- PLAYER INTERACTION ---
-          
-          // 1. Sample Trail Map (Persistent displacement)
-          vec2 mapUV = (worldPos.xz + (uTerrainSize * 0.5)) / uTerrainSize;
-          mapUV = clamp(mapUV, 0.0, 1.0);
-          mapUV.y = 1.0 - mapUV.y; // Flip Y to match camera projection
-          float trailValue = texture2D(uTrailMap, mapUV).r;
-          
-          // 2. Immediate Interaction (Elastic collision)
-          float dist = distance(worldPos.xz, uPlayerPos.xz);
-          float radius = 0.35; // Tighter radius for feet accuracy
-          float immediatePush = 1.0 - smoothstep(0.0, radius, dist);
-          immediatePush = pow(immediatePush, 1.5);
-          
-          vec2 pushDir = normalize(worldPos.xz - uPlayerPos.xz);
-          if (length(worldPos.xz - uPlayerPos.xz) < 0.01) pushDir = vec2(1.0, 0.0);
-
-          float totalEffect = max(trailValue, immediatePush);
+          // --- APPLY INTERACTION DEFORMATION ---
           
           // Flattening
-          transformed.y *= (1.0 - totalEffect * 0.9);
+          transformed.y *= (1.0 - totalEffect * 0.95);
           
           // Directional push
+          vec2 pushDir = normalize(worldPos.xz - uPlayerPos.xz);
+          if (length(worldPos.xz - uPlayerPos.xz) < 0.01) pushDir = vec2(1.0, 0.0);
+          
           vec2 messyDir = vec2(snoise(worldPos.xz * 10.0), snoise(worldPos.xz * 10.0 + 50.0));
           vec2 finalDir = mix(messyDir, pushDir, immediatePush);
           
@@ -272,7 +277,8 @@ export class GrassSystem {
 
       // Region based height
       const region = noise(x * 0.015, z * 0.015); 
-      const tallFactor = smoothstep(0.0, 0.8, region);    
+      // Fix: smoothstep is not global, use THREE.MathUtils
+      const tallFactor = THREE.MathUtils.smoothstep(region, 0.0, 0.8);
       
       // Much more height variation
       // Base height 0.4, up to 1.4 in tall regions
