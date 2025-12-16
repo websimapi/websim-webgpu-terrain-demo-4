@@ -26,6 +26,7 @@ export default function WebGPUTerrainDemo() {
     let renderer, scene, camera;
     let grassSystem, player, particles;
     let terrain; // still need ref for raycasting
+    let sun; // Expose sun for updating
     
     let clickMarker;
     let cleanupClick;
@@ -75,19 +76,25 @@ export default function WebGPUTerrainDemo() {
         scene.add(sky);
 
         // Lighting
-        const sun = new THREE.DirectionalLight(0xfff5e6, 2.0);
+        sun = new THREE.DirectionalLight(0xfff5e6, 2.0);
         sun.position.set(50, 60, 30);
         sun.castShadow = true;
-        sun.shadow.mapSize.width = 2048;
-        sun.shadow.mapSize.height = 2048;
+        sun.shadow.mapSize.width = 4096;
+        sun.shadow.mapSize.height = 4096;
         sun.shadow.camera.near = 0.5;
-        sun.shadow.camera.far = 150;
-        sun.shadow.camera.left = -50;
-        sun.shadow.camera.right = 50;
-        sun.shadow.camera.top = 50;
-        sun.shadow.camera.bottom = -50;
-        sun.shadow.bias = -0.0005; 
+        sun.shadow.camera.far = 200;
+        
+        // Increased shadow camera coverage for better LOD support
+        const shadowSize = 100;
+        sun.shadow.camera.left = -shadowSize;
+        sun.shadow.camera.right = shadowSize;
+        sun.shadow.camera.top = shadowSize;
+        sun.shadow.camera.bottom = -shadowSize;
+        
+        sun.shadow.bias = -0.0001; 
+        sun.shadow.normalBias = 0.05; // Helps with self-shadowing artifacts
         scene.add(sun);
+        scene.add(sun.target);
 
         const ambient = new THREE.AmbientLight(0x404060, 0.6);
         scene.add(ambient);
@@ -186,6 +193,15 @@ export default function WebGPUTerrainDemo() {
 
           // Player update first to ensure correct position for grass
           player.update(deltaTime * 0.001, camera);
+
+          // Update Sun to follow player for high quality shadows everywhere
+          const playerPos = player.getPosition();
+          if (playerPos) {
+             const sunOffset = new THREE.Vector3(50, 60, 30);
+             sun.position.copy(playerPos).add(sunOffset);
+             sun.target.position.copy(playerPos);
+             sun.target.updateMatrixWorld();
+          }
 
           // Grass update with current player position
           grassSystem.update(time, deltaTime * 0.001, player.getPosition(), camera);

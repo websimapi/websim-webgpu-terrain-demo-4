@@ -6,6 +6,65 @@ function noise(x, z) {
          Math.sin(x * 0.3 + 1.2) * Math.cos(z * 0.3 + 2.0) * 0.5;
 }
 
+const GRASS_VERTEX_LOGIC = `
+  vec3 transformed = vec3( position );
+  vHeight = uv.y;
+  
+  vec4 instancePosition = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+  vec3 worldPos = (modelMatrix * instancePosition).xyz;
+  vWorldPosition = worldPos;
+
+  // --- PLAYER INTERACTION ---
+  vec2 mapUV = (worldPos.xz + (uTerrainSize * 0.5)) / uTerrainSize;
+  mapUV = clamp(mapUV, 0.0, 1.0);
+  mapUV.y = 1.0 - mapUV.y; 
+  float trailValue = texture2D(uTrailMap, mapUV).r;
+  
+  float dist = distance(worldPos.xz, uPlayerPos.xz);
+  float radius = 0.45; 
+  float immediatePush = 1.0 - smoothstep(0.0, radius, dist);
+  immediatePush = pow(immediatePush, 1.5);
+  
+  float totalEffect = max(trailValue, immediatePush);
+  totalEffect = clamp(totalEffect, 0.0, 1.0);
+
+  // --- WIND ANIMATION ---
+  float time = uTime * 0.6;
+  float swell = sin(worldPos.x * 0.05 + worldPos.z * 0.05 + time * 0.5) * 0.5 + 0.5;
+  float flutter = sin(worldPos.x * 1.5 + time * 2.0) * cos(worldPos.z * 1.0);
+  
+  float windDampen = 1.0 - clamp(totalEffect * 1.2, 0.0, 1.0);
+  float windForce = (swell * 0.5 + flutter * 0.2) * windDampen;
+  
+  float bend = pow(vHeight, 2.0); 
+  transformed.x += windForce * bend * 0.4; 
+  transformed.z += windForce * bend * 0.2;
+  
+  // --- DEFORMATION ---
+  transformed.y *= (1.0 - totalEffect * 0.95);
+  
+  vec2 pushDir = normalize(worldPos.xz - uPlayerPos.xz);
+  if (length(worldPos.xz - uPlayerPos.xz) < 0.01) pushDir = vec2(1.0, 0.0);
+  
+  vec2 messyDir = vec2(
+    sin(worldPos.x * 10.0 + worldPos.z * 3.0), 
+    cos(worldPos.x * 7.0 + worldPos.z * 10.0)
+  );
+  vec2 finalDir = mix(messyDir, pushDir, immediatePush);
+  
+  float pushStrength = 0.8;
+  transformed.x += finalDir.x * totalEffect * pushStrength * vHeight;
+  transformed.z += finalDir.y * totalEffect * pushStrength * vHeight;
+
+  // Normal adjustment (only affects lighting, safe to ignore in depth pass if objectNormal missing, but usually present)
+  #ifdef USE_SHADOWMAP
+     // In shadow pass (Depth Material), objectNormal might be defined depending on include order.
+     // But strictly we don't need to mod normal for shadow shape.
+  #else
+     objectNormal = normalize(mix(objectNormal, vec3(0.0, 1.0, 0.0), 0.7));
+  #endif
+`;
+
 export class GrassSystem {
   constructor(scene, getTerrainHeight, renderer) {
     this.uniforms = { 
@@ -29,7 +88,7 @@ export class GrassSystem {
     
     // Initialize Geometry and Material reused by all chunks
     this.baseGeometry = this.createGeometry();
-    this.baseMaterial = this.createMaterial();
+    this.initMaterials();
 
     // Create Grass Chunks
     this.chunks = [];
@@ -127,94 +186,37 @@ export class GrassSystem {
     return grassGeo;
   }
 
-  createMaterial() {
-    return new THREE.MeshStandardMaterial({
+  initMaterials() {
+    const patchShader = (shader) => {
+      Object.assign(shader.uniforms, this.uniforms);
+      
+      shader.vertexShader = `
+        uniform float uTime;
+        uniform vec3 uPlayerPos;
+        uniform vec3 uPlayerVel;
+        uniform sampler2D uTrailMap;
+        uniform float uTerrainSize;
+        varying float vHeight;
+        varying vec3 vWorldPosition;
+        ${shader.vertexShader}
+      `;
+
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        GRASS_VERTEX_LOGIC
+      );
+    };
+
+    // 1. Visible Material
+    this.baseMaterial = new THREE.MeshStandardMaterial({
       color: 0xffffff, 
       roughness: 1.0, 
       metalness: 0.0,
       side: THREE.DoubleSide,
       flatShading: false,
       onBeforeCompile: (shader) => {
-        Object.assign(shader.uniforms, this.uniforms);
+        patchShader(shader);
         
-        shader.vertexShader = `
-          uniform float uTime;
-          uniform vec3 uPlayerPos;
-          uniform vec3 uPlayerVel;
-          uniform sampler2D uTrailMap;
-          uniform float uTerrainSize;
-          
-          varying float vHeight;
-          varying vec3 vInstanceColor;
-          varying vec3 vWorldPosition;
-        ` + shader.vertexShader;
-
-        shader.vertexShader = shader.vertexShader.replace(
-          '#include <begin_vertex>',
-          `
-          vec3 transformed = vec3( position );
-          vHeight = uv.y;
-          vInstanceColor = instanceColor;
-          
-          vec4 instancePosition = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-          vec3 worldPos = (modelMatrix * instancePosition).xyz;
-          vWorldPosition = worldPos;
-
-          // --- PLAYER INTERACTION (Calculated first to modulate wind) ---
-          
-          // 1. Sample Trail Map (Persistent displacement)
-          vec2 mapUV = (worldPos.xz + (uTerrainSize * 0.5)) / uTerrainSize;
-          mapUV = clamp(mapUV, 0.0, 1.0);
-          mapUV.y = 1.0 - mapUV.y; 
-          float trailValue = texture2D(uTrailMap, mapUV).r;
-          
-          // 2. Immediate Interaction
-          float dist = distance(worldPos.xz, uPlayerPos.xz);
-          float radius = 0.45; 
-          float immediatePush = 1.0 - smoothstep(0.0, radius, dist);
-          immediatePush = pow(immediatePush, 1.5);
-          
-          float totalEffect = max(trailValue, immediatePush);
-          totalEffect = clamp(totalEffect, 0.0, 1.0);
-
-          // --- WIND ANIMATION (Optimized) ---
-          float time = uTime * 0.6;
-          // Simple trig for performance with high instance count
-          float swell = sin(worldPos.x * 0.05 + worldPos.z * 0.05 + time * 0.5) * 0.5 + 0.5;
-          float flutter = sin(worldPos.x * 1.5 + time * 2.0) * cos(worldPos.z * 1.0);
-          
-          // Dampen wind where grass is trampled so it doesn't slide on ground
-          float windDampen = 1.0 - clamp(totalEffect * 1.2, 0.0, 1.0);
-          float windForce = (swell * 0.5 + flutter * 0.2) * windDampen;
-          
-          float bend = pow(vHeight, 2.0); 
-          transformed.x += windForce * bend * 0.4; 
-          transformed.z += windForce * bend * 0.2;
-          
-          // --- APPLY INTERACTION DEFORMATION ---
-          
-          // Flattening
-          transformed.y *= (1.0 - totalEffect * 0.95);
-          
-          // Directional push
-          vec2 pushDir = normalize(worldPos.xz - uPlayerPos.xz);
-          if (length(worldPos.xz - uPlayerPos.xz) < 0.01) pushDir = vec2(1.0, 0.0);
-          
-          // Cheap random direction using trig
-          vec2 messyDir = vec2(
-            sin(worldPos.x * 10.0 + worldPos.z * 3.0), 
-            cos(worldPos.x * 7.0 + worldPos.z * 10.0)
-          );
-          vec2 finalDir = mix(messyDir, pushDir, immediatePush);
-          
-          float pushStrength = 0.8;
-          transformed.x += finalDir.x * totalEffect * pushStrength * vHeight;
-          transformed.z += finalDir.y * totalEffect * pushStrength * vHeight;
-
-          objectNormal = normalize(mix(objectNormal, vec3(0.0, 1.0, 0.0), 0.7));
-          `
-        );
-
         shader.fragmentShader = `
           varying float vHeight;
           varying vec3 vInstanceColor;
@@ -228,13 +230,28 @@ export class GrassSystem {
           
           vec3 finalColor = mix(bottomColor, topColor, vHeight);
           finalColor *= vInstanceColor;
-          
-          // AO
-          finalColor *= smoothstep(-0.1, 0.3, vHeight);
-
+          finalColor *= smoothstep(-0.1, 0.3, vHeight); // AO
           diffuseColor.rgb = finalColor;
           `
         );
+        
+        // Inject vInstanceColor support in vertex for main material
+        shader.vertexShader = shader.vertexShader.replace(
+           'varying vec3 vWorldPosition;',
+           'varying vec3 vWorldPosition; varying vec3 vInstanceColor;'
+        );
+        shader.vertexShader = shader.vertexShader.replace(
+           'vHeight = uv.y;',
+           'vHeight = uv.y; vInstanceColor = instanceColor;'
+        );
+      }
+    });
+
+    // 2. Depth Material (For Shadows)
+    this.baseDepthMaterial = new THREE.MeshDepthMaterial({
+      depthPacking: THREE.RGBADepthPacking,
+      onBeforeCompile: (shader) => {
+        patchShader(shader);
       }
     });
   }
@@ -269,10 +286,15 @@ export class GrassSystem {
     const meshBase = new THREE.InstancedMesh(this.baseGeometry, this.baseMaterial, baseCount);
     const meshDetail = new THREE.InstancedMesh(this.baseGeometry, this.baseMaterial, detailCount);
     
-    meshBase.castShadow = false;
+    // Enable shadows
+    meshBase.castShadow = true;
     meshBase.receiveShadow = true;
-    meshDetail.castShadow = false;
+    meshDetail.castShadow = true; // Warning: Expensive
     meshDetail.receiveShadow = true;
+    
+    // Assign custom depth material for correct shadow deformation
+    meshBase.customDepthMaterial = this.baseDepthMaterial;
+    meshDetail.customDepthMaterial = this.baseDepthMaterial;
 
     this.fillMesh(meshBase, 0, baseCount, startX, startZ, size, dummy, color);
     this.fillMesh(meshDetail, 0, detailCount, startX, startZ, size, dummy, color);
@@ -367,8 +389,8 @@ export class GrassSystem {
 
   updateLOD(playerPosition) {
     // LOD Settings
-    const distHigh = 64;
-    const distLow = 128;
+    const distHigh = 128;
+    const distLow = 256;
     
     // Reuse vector to prevent garbage collection
     const chunkPos = new THREE.Vector3();
