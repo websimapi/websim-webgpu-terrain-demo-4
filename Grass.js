@@ -20,9 +20,10 @@ export class GrassSystem {
   createGrassMesh(getTerrainHeight) {
     // 1. Improved Geometry
     // Taller grass, more segments for smooth bending (curvature)
-    const grassHeight = 0.5;
+    const grassHeight = 0.35; // Shorter base height
+    const grassWidth = 0.04;  // Thinner strands
     const segments = 5; 
-    const grassGeo = new THREE.PlaneGeometry(0.12, grassHeight, 1, segments);
+    const grassGeo = new THREE.PlaneGeometry(grassWidth, grassHeight, 1, segments);
     grassGeo.translate(0, grassHeight / 2, 0); 
     
     // Manual Tapering in JS to create blade shape
@@ -175,7 +176,7 @@ export class GrassSystem {
     });
     
     // 3. Instancing with Clumping
-    const instanceCount = 180000;
+    const instanceCount = 400000; // Much denser
     const mesh = new THREE.InstancedMesh(grassGeo, grassMat, instanceCount);
     mesh.receiveShadow = true;
     mesh.castShadow = false; // Performance optimization
@@ -189,10 +190,9 @@ export class GrassSystem {
       const x = (Math.random() - 0.5) * range;
       const z = (Math.random() - 0.5) * range;
       
-      // Clump distribution using noise
-      const n = noise(x, z);
-      // Skip some spots to create natural gaps/paths
-      if (n < -0.3) continue;
+      // No more gaps - fill all regions
+      // const n = noise(x, z);
+      // if (n < -0.3) continue;
 
       const y = getTerrainHeight(x, z);
       dummy.position.set(x, y, z);
@@ -203,9 +203,10 @@ export class GrassSystem {
       dummy.rotation.x = (Math.random() - 0.5) * 0.3;
       dummy.rotation.z = (Math.random() - 0.5) * 0.3;
 
-      // Random scale
-      const scale = 0.5 + Math.random() * 0.7;
-      dummy.scale.set(scale, scale, scale);
+      // Random scale - Varied height
+      const hScale = 0.6 + Math.random() * 1.0; // Height varies from 60% to 160%
+      const wScale = 0.8 + Math.random() * 0.4; // Width varies slightly
+      dummy.scale.set(wScale, hScale, wScale);
       
       dummy.updateMatrix();
       mesh.setMatrixAt(idx, dummy.matrix);
