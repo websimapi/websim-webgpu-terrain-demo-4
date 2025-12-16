@@ -232,6 +232,7 @@ export class GrassSystem {
         uniform float uTerrainSize;
         varying float vHeight;
         varying vec3 vWorldPosition;
+        varying vec3 vInstanceColor;
         ${shader.vertexShader}
       `;
 
@@ -336,6 +337,16 @@ export class GrassSystem {
           vec3 ambientBoost = vec3(0.05, 0.1, 0.05) * (1.0 - NdotL) * vHeight;
           outgoingLight += ambientBoost;
           `
+        );
+
+        // Inject vInstanceColor support in vertex for main material
+        shader.vertexShader = shader.vertexShader.replace(
+           'varying vec3 vWorldPosition;',
+           'varying vec3 vWorldPosition; varying vec3 vInstanceColor;'
+        );
+        shader.vertexShader = shader.vertexShader.replace(
+           'vHeight = uv.y;',
+           'vHeight = uv.y; vInstanceColor = instanceColor;'
         );
       }
     });
@@ -447,6 +458,7 @@ export class GrassSystem {
 
   update(time, dt, playerPosition, camera, sunDirection, lodHigh = 128, lodLow = 256) {
     this.uniforms.uTime.value = time;
+    if (sunDirection) this.uniforms.uSunDir.value.copy(sunDirection);
     
     if (playerPosition) {
       this.brush.position.set(playerPosition.x, 0, playerPosition.z);

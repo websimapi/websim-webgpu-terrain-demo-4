@@ -210,8 +210,9 @@ export default function WebGPUTerrainDemo() {
 
           // Update Sun to follow player for high quality shadows everywhere
           const playerPos = player.getPosition();
+          const sunOffset = new THREE.Vector3(50, 60, 30);
+
           if (playerPos) {
-             const sunOffset = new THREE.Vector3(50, 60, 30);
              sun.position.copy(playerPos).add(sunOffset);
              sun.target.position.copy(playerPos);
              sun.target.updateMatrixWorld();
@@ -224,7 +225,8 @@ export default function WebGPUTerrainDemo() {
           const lodLow = 256 * zoomLevel;
 
           // Grass update with current player position
-          grassSystem.update(time, deltaTime * 0.001, player.getPosition(), camera, lodHigh, lodLow);
+          const sunDir = sunOffset.normalize();
+          grassSystem.update(time, deltaTime * 0.001, player.getPosition(), camera, sunDir, lodHigh, lodLow);
           
           // Hide marker if player stopped
           if (!player.isMoving) {
