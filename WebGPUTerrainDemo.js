@@ -87,14 +87,15 @@ export default function WebGPUTerrainDemo() {
         sun.shadow.camera.far = 200;
         
         // Increased shadow camera coverage for better LOD support
-        const shadowSize = 100;
+        // Tightened for higher resolution (Contact Hardening simulation)
+        const shadowSize = 60;
         sun.shadow.camera.left = -shadowSize;
         sun.shadow.camera.right = shadowSize;
         sun.shadow.camera.top = shadowSize;
         sun.shadow.camera.bottom = -shadowSize;
         
-        sun.shadow.bias = -0.0001; 
-        sun.shadow.normalBias = 0.05; // Helps with self-shadowing artifacts
+        sun.shadow.bias = -0.0005; 
+        sun.shadow.normalBias = 0.02; // Reduced normal bias for more accurate self-shadowing
         scene.add(sun);
         scene.add(sun.target);
 

@@ -9,7 +9,7 @@ function noise(x, z) {
 const GRASS_VERTEX_LOGIC = `
   vec3 transformed = vec3( position );
   vHeight = uv.y;
-  
+
   vec4 instancePosition = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
   vec3 worldPos = (modelMatrix * instancePosition).xyz;
   vWorldPosition = worldPos;
@@ -19,49 +19,83 @@ const GRASS_VERTEX_LOGIC = `
   mapUV = clamp(mapUV, 0.0, 1.0);
   mapUV.y = 1.0 - mapUV.y; 
   float trailValue = texture2D(uTrailMap, mapUV).r;
-  
+
   float dist = distance(worldPos.xz, uPlayerPos.xz);
-  float radius = 0.45; 
+  float radius = 0.5; 
   float immediatePush = 1.0 - smoothstep(0.0, radius, dist);
-  immediatePush = pow(immediatePush, 1.5);
-  
+  // immediatePush = pow(immediatePush, 1.5);
+
   float totalEffect = max(trailValue, immediatePush);
   totalEffect = clamp(totalEffect, 0.0, 1.0);
 
   // --- WIND ANIMATION ---
+  float windStrength = 1.0 - totalEffect * 0.8; // Reduce wind on crushed grass
+
   float time = uTime * 0.6;
   float swell = sin(worldPos.x * 0.05 + worldPos.z * 0.05 + time * 0.5) * 0.5 + 0.5;
   float flutter = sin(worldPos.x * 1.5 + time * 2.0) * cos(worldPos.z * 1.0);
-  
-  float windDampen = 1.0 - clamp(totalEffect * 1.2, 0.0, 1.0);
-  float windForce = (swell * 0.5 + flutter * 0.2) * windDampen;
-  
-  float bend = pow(vHeight, 2.0); 
-  transformed.x += windForce * bend * 0.4; 
-  transformed.z += windForce * bend * 0.2;
-  
-  // --- DEFORMATION ---
-  transformed.y *= (1.0 - totalEffect * 0.95);
-  
-  vec2 pushDir = normalize(worldPos.xz - uPlayerPos.xz);
-  if (length(worldPos.xz - uPlayerPos.xz) < 0.01) pushDir = vec2(1.0, 0.0);
-  
-  vec2 messyDir = vec2(
-    sin(worldPos.x * 10.0 + worldPos.z * 3.0), 
-    cos(worldPos.x * 7.0 + worldPos.z * 10.0)
-  );
-  vec2 finalDir = mix(messyDir, pushDir, immediatePush);
-  
-  float pushStrength = 0.8;
-  transformed.x += finalDir.x * totalEffect * pushStrength * vHeight;
-  transformed.z += finalDir.y * totalEffect * pushStrength * vHeight;
 
-  // Normal adjustment (only affects lighting, safe to ignore in depth pass if objectNormal missing, but usually present)
+  float windForce = (swell * 0.5 + flutter * 0.2) * windStrength;
+
+  // Apply wind bending
+  float bend = pow(vHeight, 2.0); 
+  float lean = windForce * bend;
+  transformed.x += lean * 0.4; 
+  transformed.z += lean * 0.2;
+
+  // --- WIND NORMAL ADJUSTMENT ---
+  // Tilt normal slightly to match wind direction for correct specular glint
+  // Wind dir approx (0.9, 0, 0.4) normalized
+  float tilt = lean * 0.5;
+  vec3 windAxis = normalize(vec3(-0.2, 0.0, 0.4)); // Perpendicular to wind
+  float ct = cos(tilt);
+  float st = sin(tilt);
+  vec3 nw = objectNormal;
+  objectNormal = nw * ct + cross(windAxis, nw) * st + windAxis * dot(windAxis, nw) * (1.0 - ct);
+
+  // --- REALISTIC CRUSHING (Rotation) ---
+  // Determine crush direction
+  vec2 playerPushDir = normalize(worldPos.xz - uPlayerPos.xz);
+  if (length(worldPos.xz - uPlayerPos.xz) < 0.001) playerPushDir = vec2(1.0, 0.0);
+
+  // Stable random direction for old trails
+  float randAngle = sin(worldPos.x * 12.9898 + worldPos.z * 78.233) * 43758.5453;
+  vec2 noiseDir = vec2(cos(randAngle), sin(randAngle));
+
+  // Blend direction: If immediate interaction, use player dir, else random
+  vec2 crushDir2 = mix(noiseDir, playerPushDir, immediatePush);
+  vec3 crushDir = normalize(vec3(crushDir2.x, 0.0, crushDir2.y));
+
+  // Rotation Axis (perpendicular to crush direction)
+  vec3 rotAxis = normalize(cross(vec3(0.0, 1.0, 0.0), crushDir));
+
+  // Angle
+  float crushFactor = smoothstep(0.05, 0.9, totalEffect);
+  float angle = crushFactor * 1.4; // Bend up to ~80 degrees
+
+  // Rodrigues Rotation
+  float c = cos(angle);
+  float s = sin(angle);
+  vec3 v = transformed;
+  vec3 k = rotAxis;
+  vec3 rotated = v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c);
+
+  transformed = rotated;
+
+  // Sink slightly to avoid floating base
+  transformed.y -= crushFactor * 0.1 * vHeight;
+
+  // Normal adjustment for lighting
   #ifdef USE_SHADOWMAP
-     // In shadow pass (Depth Material), objectNormal might be defined depending on include order.
-     // But strictly we don't need to mod normal for shadow shape.
+     // Shadow pass
   #else
-     objectNormal = normalize(mix(objectNormal, vec3(0.0, 1.0, 0.0), 0.7));
+     // Rotate normal for correct lighting
+     vec3 n = objectNormal;
+     vec3 n_rot = n * c + cross(k, n) * s + k * dot(k, n) * (1.0 - c);
+     objectNormal = normalize(n_rot);
+
+     // Mix with Up vector to keep some top-down lighting softness
+     objectNormal = normalize(mix(objectNormal, vec3(0.0, 1.0, 0.0), 0.2));
   #endif
 `;
 
@@ -189,7 +223,7 @@ export class GrassSystem {
   initMaterials() {
     const patchShader = (shader) => {
       Object.assign(shader.uniforms, this.uniforms);
-      
+
       shader.vertexShader = `
         uniform float uTime;
         uniform vec3 uPlayerPos;
@@ -210,39 +244,98 @@ export class GrassSystem {
     // 1. Visible Material
     this.baseMaterial = new THREE.MeshStandardMaterial({
       color: 0xffffff, 
-      roughness: 1.0, 
+      roughness: 0.6, // Variable roughness in shader
       metalness: 0.0,
       side: THREE.DoubleSide,
       flatShading: false,
       onBeforeCompile: (shader) => {
         patchShader(shader);
-        
+
         shader.fragmentShader = `
           varying float vHeight;
           varying vec3 vInstanceColor;
+          // vWorldPosition is available from patchShader
         ` + shader.fragmentShader;
-        
+
+        // Custom Color & Gradient Mapping
         shader.fragmentShader = shader.fragmentShader.replace(
           '#include <color_fragment>',
           `
-          vec3 bottomColor = vec3(0.01, 0.08, 0.01);
-          vec3 topColor = vec3(0.2, 0.5, 0.1);
+          // AAA Realistic Color Gradient
+          vec3 rootColor = vec3(0.01, 0.03, 0.0);   // Dark, soil-occluded base
+          vec3 midColor  = vec3(0.12, 0.35, 0.02);  // Rich chlorophyll green
+          vec3 tipColor  = vec3(0.45, 0.55, 0.1);   // Translucent, sun-bleached tip
+          vec3 dryColor  = vec3(0.5, 0.45, 0.25);   // Dry patches
           
-          vec3 finalColor = mix(bottomColor, topColor, vHeight);
-          finalColor *= vInstanceColor;
-          finalColor *= smoothstep(-0.1, 0.3, vHeight); // AO
+          // Mix based on height
+          vec3 gradient = mix(rootColor, midColor, smoothstep(0.0, 0.4, vHeight));
+          gradient = mix(gradient, tipColor, smoothstep(0.4, 1.0, vHeight));
+          
+          // Variation from instance noise
+          float noise = vInstanceColor.r;
+          vec3 finalColor = mix(gradient, dryColor, noise * 0.25 + (1.0-vHeight)*0.05);
+
+          // Deep AO at root
+          finalColor *= smoothstep(-0.15, 0.2, vHeight);
+
           diffuseColor.rgb = finalColor;
           `
         );
-        
-        // Inject vInstanceColor support in vertex for main material
-        shader.vertexShader = shader.vertexShader.replace(
-           'varying vec3 vWorldPosition;',
-           'varying vec3 vWorldPosition; varying vec3 vInstanceColor;'
+
+        // Advanced Roughness (Moisture Response)
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <roughnessmap_fragment>',
+          `
+          float roughnessFactor = roughness;
+          // Base is matte/dusty, Tip is waxy/shiny
+          roughnessFactor = mix(0.85, 0.4, vHeight);
+          `
         );
-        shader.vertexShader = shader.vertexShader.replace(
-           'vHeight = uv.y;',
-           'vHeight = uv.y; vInstanceColor = instanceColor;'
+
+        // Custom Lighting: Translucency, Backscattering, Fresnel
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <lights_fragment_end>',
+          `
+          #include <lights_fragment_end>
+          
+          // Recover vectors
+          vec3 viewDirW = normalize(cameraPosition - vWorldPosition);
+          vec3 lightDirW = normalize(uSunDir);
+          vec3 normalW = normalize(vNormal); // Interpolated normal
+          
+          // --- Translucency (Subsurface Scattering) ---
+          // Light passing through the thin blade
+          // Strongest when looking against the light
+          float viewDotLight = max(0.0, dot(viewDirW, -lightDirW));
+          float transPower = pow(viewDotLight, 5.0); // Sharp falloff
+          
+          // Diffusion through thickness (thinner at top)
+          float thickness = smoothstep(0.0, 1.0, vHeight); 
+          float transIntensity = 2.5 * thickness;
+          
+          vec3 sssColor = vec3(0.6, 0.8, 0.1); // Inner glow color
+          vec3 translucency = sssColor * transPower * transIntensity;
+          
+          // Only apply translucency if unshadowed (approx) or let it glow slightly in shadow
+          // outgoingLight includes direct and indirect. We add emission.
+          outgoingLight += translucency * 0.8;
+
+          // --- Fresnel Rim Light ---
+          // Grazing angles appear brighter (waxy cuticle)
+          float fresnel = pow(1.0 - abs(dot(viewDirW, normalW)), 3.0);
+          vec3 fresnelColor = vec3(0.7, 0.9, 0.6) * fresnel * 0.5 * vHeight;
+          outgoingLight += fresnelColor;
+          
+          // --- Wrapped Lighting (Fake GI) ---
+          // Soften the harsh black shadows on backfaces
+          float wrap = 0.4;
+          float NdotL = max(0.0, dot(normalW, lightDirW));
+          float wrapLight = max(0.0, (dot(normalW, lightDirW) + wrap) / (1.0 + wrap));
+          
+          // Boost ambient in shadow areas
+          vec3 ambientBoost = vec3(0.05, 0.1, 0.05) * (1.0 - NdotL) * vHeight;
+          outgoingLight += ambientBoost;
+          `
         );
       }
     });
