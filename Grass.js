@@ -360,19 +360,19 @@ export class GrassSystem {
       this.lastPlayerPos.copy(playerPosition);
     }
 
-    if (camera) {
-      this.updateLOD(camera);
+    if (playerPosition) {
+      this.updateLOD(playerPosition);
     }
   }
 
-  updateLOD(camera) {
+  updateLOD(playerPosition) {
     // LOD Settings
-    const distHigh = 32;
-    const distLow = 64;
+    const distHigh = 64;
+    const distLow = 128;
     
     // Reuse vector to prevent garbage collection
     const chunkPos = new THREE.Vector3();
-    const camPos = camera.position;
+    const centerPos = new THREE.Vector3(playerPosition.x, 0, playerPosition.z);
 
     // Check visibility frustum (optional, InstancedMesh does it too, but we can skip logic)
     // For now, distance based LOD
@@ -380,7 +380,7 @@ export class GrassSystem {
     for (let chunk of this.chunks) {
       chunkPos.copy(chunk.center);
       chunkPos.y = 0; // Ignore height diff for LOD rings
-      const dist = chunkPos.distanceTo(new THREE.Vector3(camPos.x, 0, camPos.z));
+      const dist = chunkPos.distanceTo(centerPos);
 
       if (dist < distHigh) {
         // High Quality: Both meshes visible
