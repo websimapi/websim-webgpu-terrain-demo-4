@@ -98,8 +98,8 @@ export class GrassSystem {
   createGrassMesh(getTerrainHeight) {
     // 1. Improved Geometry
     const grassHeight = 0.8; 
-    const grassWidth = 0.06; 
-    const segments = 5;       
+    const grassWidth = 0.022; 
+    const segments = 2;       
     
     const grassGeo = new THREE.PlaneGeometry(grassWidth, grassHeight, 1, segments);
     grassGeo.translate(0, grassHeight / 2, 0); 
@@ -128,35 +128,6 @@ export class GrassSystem {
       onBeforeCompile: (shader) => {
         Object.assign(shader.uniforms, this.uniforms);
         
-        const noiseChunks = `
-            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-            vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-            vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
-            float snoise(vec2 v){
-                const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
-                vec2 i  = floor(v + dot(v, C.yy) );
-                vec2 x0 = v -   i + dot(i, C.xx);
-                vec2 i1;
-                i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-                vec4 x12 = x0.xyxy + C.xxzz;
-                x12.xy -= i1;
-                i = mod289(i);
-                vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 )) + i.x + vec3(0.0, i1.x, 1.0 ));
-                vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
-                m = m*m ;
-                m = m*m ;
-                vec3 x = 2.0 * fract(p * C.www) - 1.0;
-                vec3 h = abs(x) - 0.5;
-                vec3 ox = floor(x + 0.5);
-                vec3 a0 = x - ox;
-                m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
-                vec3 g;
-                g.x  = a0.x  * x0.x  + h.x  * x0.y;
-                g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-                return 130.0 * dot(m, g);
-            }
-        `;
-
         shader.vertexShader = `
           uniform float uTime;
           uniform vec3 uPlayerPos;
@@ -167,7 +138,6 @@ export class GrassSystem {
           varying float vHeight;
           varying vec3 vInstanceColor;
           varying vec3 vWorldPosition;
-          ${noiseChunks}
         ` + shader.vertexShader;
 
         shader.vertexShader = shader.vertexShader.replace(
@@ -198,14 +168,15 @@ export class GrassSystem {
           float totalEffect = max(trailValue, immediatePush);
           totalEffect = clamp(totalEffect, 0.0, 1.0);
 
-          // --- WIND ANIMATION ---
+          // --- WIND ANIMATION (Optimized) ---
           float time = uTime * 0.6;
-          float swell = snoise(worldPos.xz * 0.03 + time * 0.4); 
-          float flutter = snoise(worldPos.xz * 1.0 + time * 2.0); 
+          // Simple trig for performance with high instance count
+          float swell = sin(worldPos.x * 0.05 + worldPos.z * 0.05 + time * 0.5) * 0.5 + 0.5;
+          float flutter = sin(worldPos.x * 1.5 + time * 2.0) * cos(worldPos.z * 1.0);
           
           // Dampen wind where grass is trampled so it doesn't slide on ground
           float windDampen = 1.0 - clamp(totalEffect * 1.2, 0.0, 1.0);
-          float windForce = (swell * 0.8 + flutter * 0.3) * windDampen;
+          float windForce = (swell * 0.5 + flutter * 0.2) * windDampen;
           
           float bend = pow(vHeight, 2.0); 
           transformed.x += windForce * bend * 0.4; 
@@ -220,7 +191,11 @@ export class GrassSystem {
           vec2 pushDir = normalize(worldPos.xz - uPlayerPos.xz);
           if (length(worldPos.xz - uPlayerPos.xz) < 0.01) pushDir = vec2(1.0, 0.0);
           
-          vec2 messyDir = vec2(snoise(worldPos.xz * 10.0), snoise(worldPos.xz * 10.0 + 50.0));
+          // Cheap random direction using trig
+          vec2 messyDir = vec2(
+            sin(worldPos.x * 10.0 + worldPos.z * 3.0), 
+            cos(worldPos.x * 7.0 + worldPos.z * 10.0)
+          );
           vec2 finalDir = mix(messyDir, pushDir, immediatePush);
           
           float pushStrength = 0.8;
@@ -255,7 +230,7 @@ export class GrassSystem {
     });
     
     // 3. Instancing with Extreme Density
-    const instanceCount = 2000000; 
+    const instanceCount = 5000000; 
     const mesh = new THREE.InstancedMesh(grassGeo, grassMat, instanceCount);
     mesh.receiveShadow = true;
     mesh.castShadow = false; 
