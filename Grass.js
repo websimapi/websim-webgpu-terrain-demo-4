@@ -20,8 +20,8 @@ export class GrassSystem {
   createGrassMesh(getTerrainHeight) {
     // 1. Improved Geometry
     // Taller grass, more segments for smooth bending (curvature)
-    const grassHeight = 0.45; // Taller for more flow
-    const grassWidth = 0.03;  // Thin but visible
+    const grassHeight = 0.8; // Increased base height
+    const grassWidth = 0.15;  // Much thicker/wider blades
     const segments = 6;       // Smoother bending
     
     const grassGeo = new THREE.PlaneGeometry(grassWidth, grassHeight, 1, segments);
@@ -112,7 +112,7 @@ export class GrassSystem {
           // Combine multiple frequencies for turbulence
           float swell = snoise(worldPos.xz * 0.05 + time * 0.4); 
           float flutter = snoise(worldPos.xz * 0.8 + time * 2.0); 
-          float windForce = swell * 0.5 + flutter * 0.2;
+          float windForce = swell * 1.0 + flutter * 0.4;
           
           // Bend factor (zero at bottom, high at top)
           float bend = pow(vHeight, 2.0);
@@ -207,9 +207,17 @@ export class GrassSystem {
       dummy.rotation.x = (Math.random() - 0.5) * 0.5;
       dummy.rotation.z = (Math.random() - 0.5) * 0.5;
 
-      // Random scale - Varied height
-      const hScale = 0.5 + Math.random() * 0.7; // Height varies
-      const wScale = 0.6 + Math.random() * 0.4; // Width varies
+      // Region based height (Tall grass regions)
+      const region = noise(x * 0.015, z * 0.015); // Low frequency noise
+      const tallFactor = Math.max(0.0, region);    // 0 to ~1.5
+      
+      // Scale calculation
+      // Base variance + Tall region boost
+      const hScale = 0.5 + Math.random() * 0.5 + (tallFactor * 1.5);
+      
+      // Width scales with height to keep proportions, plus random variation
+      const wScale = 0.5 + Math.random() * 0.5 + (tallFactor * 0.2); 
+      
       dummy.scale.set(wScale, hScale, wScale);
       
       dummy.updateMatrix();
@@ -217,11 +225,13 @@ export class GrassSystem {
       
       // Color Variation (Patches)
       const colorNoise = noise(x * 0.05, z * 0.05); 
-      if (colorNoise > 0.5) {
-         color.setHex(0x90a060); // Dryish
+      if (colorNoise > 0.6) {
+         color.setHex(0x90a060); // Dryish patches
       } else {
          // Green variance
-         const v = 0.7 + Math.random() * 0.3;
+         // Make tall grass slightly darker/richer
+         const richness = tallFactor * 0.1; 
+         const v = 0.6 + Math.random() * 0.3 - richness;
          color.setRGB(v, v + 0.1, v);
       }
       mesh.setColorAt(idx, color);
