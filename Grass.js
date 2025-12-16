@@ -98,7 +98,7 @@ export class GrassSystem {
   createGrassMesh(getTerrainHeight) {
     // 1. Improved Geometry
     const grassHeight = 0.8; 
-    const grassWidth = 0.12; 
+    const grassWidth = 0.06; 
     const segments = 5;       
     
     const grassGeo = new THREE.PlaneGeometry(grassWidth, grassHeight, 1, segments);
@@ -255,7 +255,7 @@ export class GrassSystem {
     });
     
     // 3. Instancing with Extreme Density
-    const instanceCount = 1000000; 
+    const instanceCount = 2000000; 
     const mesh = new THREE.InstancedMesh(grassGeo, grassMat, instanceCount);
     mesh.receiveShadow = true;
     mesh.castShadow = false; 
