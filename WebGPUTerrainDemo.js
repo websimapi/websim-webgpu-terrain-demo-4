@@ -188,7 +188,7 @@ export default function WebGPUTerrainDemo() {
           player.update(deltaTime * 0.001, camera);
 
           // Grass update with current player position
-          grassSystem.update(time, deltaTime * 0.001, player.getPosition());
+          grassSystem.update(time, deltaTime * 0.001, player.getPosition(), camera);
           
           // Hide marker if player stopped
           if (!player.isMoving) {

@@ -18,14 +18,22 @@ export class GrassSystem {
     
     this.renderer = renderer;
     this.scene = scene;
+    this.getTerrainHeight = getTerrainHeight;
     this.lastPlayerPos = new THREE.Vector3(0, -100, 0);
     
+    this.group = new THREE.Group();
+    scene.add(this.group);
+
     // Initialize the trail persistence system (FBO)
     this.initTrailSystem();
     
-    // Create the main grass mesh
-    this.mesh = this.createGrassMesh(getTerrainHeight);
-    scene.add(this.mesh);
+    // Initialize Geometry and Material reused by all chunks
+    this.baseGeometry = this.createGeometry();
+    this.baseMaterial = this.createMaterial();
+
+    // Create Grass Chunks
+    this.chunks = [];
+    this.initChunks();
   }
 
   initTrailSystem() {
@@ -95,10 +103,9 @@ export class GrassSystem {
     this.trailScene.add(this.fadeQuad);
   }
 
-  createGrassMesh(getTerrainHeight) {
-    // 1. Improved Geometry
+  createGeometry() {
     const grassHeight = 0.8; 
-    const grassWidth = 0.022; 
+    const grassWidth = 0.015; // Thinner as requested
     const segments = 2;       
     
     const grassGeo = new THREE.PlaneGeometry(grassWidth, grassHeight, 1, segments);
@@ -117,9 +124,11 @@ export class GrassSystem {
       posAttribute.setZ(i, posAttribute.getZ(i) - curve);
     }
     grassGeo.computeVertexNormals();
+    return grassGeo;
+  }
 
-    // 2. Advanced Shader Material
-    const grassMat = new THREE.MeshStandardMaterial({
+  createMaterial() {
+    return new THREE.MeshStandardMaterial({
       color: 0xffffff, 
       roughness: 1.0, 
       metalness: 0.0,
@@ -228,23 +237,65 @@ export class GrassSystem {
         );
       }
     });
-    
-    // 3. Instancing with Extreme Density
-    const instanceCount = 5000000; 
-    const mesh = new THREE.InstancedMesh(grassGeo, grassMat, instanceCount);
-    mesh.receiveShadow = true;
-    mesh.castShadow = false; 
+  }
 
+  initChunks() {
+    const terrainSize = 200;
+    const chunkSize = 25; // Break into 8x8 grid (64 chunks)
+    const density = 250; // High density (approx 2x previous)
+    
+    // Pre-allocate temporary objects
     const dummy = new THREE.Object3D();
     const color = new THREE.Color();
-    const range = 200; 
+    
+    // Create chunks
+    for (let x = -terrainSize/2; x < terrainSize/2; x += chunkSize) {
+      for (let z = -terrainSize/2; z < terrainSize/2; z += chunkSize) {
+        this.createChunk(x, z, chunkSize, density, dummy, color);
+      }
+    }
+  }
 
+  createChunk(startX, startZ, size, density, dummy, color) {
+    const area = size * size;
+    const totalInstances = Math.floor(area * density);
+    
+    // Split into Low LOD (base) and High LOD (detail)
+    // Low LOD: 20% of grass, always visible in medium range
+    // High LOD: 80% of grass, only visible in close range
+    const baseCount = Math.floor(totalInstances * 0.2);
+    const detailCount = totalInstances - baseCount;
+
+    const meshBase = new THREE.InstancedMesh(this.baseGeometry, this.baseMaterial, baseCount);
+    const meshDetail = new THREE.InstancedMesh(this.baseGeometry, this.baseMaterial, detailCount);
+    
+    meshBase.castShadow = false;
+    meshBase.receiveShadow = true;
+    meshDetail.castShadow = false;
+    meshDetail.receiveShadow = true;
+
+    this.fillMesh(meshBase, 0, baseCount, startX, startZ, size, dummy, color);
+    this.fillMesh(meshDetail, 0, detailCount, startX, startZ, size, dummy, color);
+
+    this.group.add(meshBase);
+    this.group.add(meshDetail);
+    
+    // Store chunk info for LOD updates
+    this.chunks.push({
+      center: new THREE.Vector3(startX + size/2, 0, startZ + size/2),
+      meshBase: meshBase,
+      meshDetail: meshDetail,
+      size: size
+    });
+  }
+
+  fillMesh(mesh, offset, count, startX, startZ, size, dummy, color) {
     let idx = 0;
-    while(idx < instanceCount) {
-      const x = (Math.random() - 0.5) * range;
-      const z = (Math.random() - 0.5) * range;
+    while(idx < count) {
+      const x = startX + Math.random() * size;
+      const z = startZ + Math.random() * size;
       
-      const y = getTerrainHeight(x, z);
+      const y = this.getTerrainHeight(x, z);
       dummy.position.set(x, y, z);
       
       dummy.rotation.y = Math.random() * Math.PI * 2;
@@ -253,11 +304,9 @@ export class GrassSystem {
 
       // Region based height
       const region = noise(x * 0.015, z * 0.015); 
-      // Fix: smoothstep is not global, use THREE.MathUtils
       const tallFactor = THREE.MathUtils.smoothstep(region, 0.0, 0.8);
       
-      // Much more height variation
-      // Base height 0.4, up to 1.4 in tall regions
+      // Height variation
       const hScale = 0.4 + Math.random() * 0.4 + (tallFactor * 0.8);
       
       // Thinner stands
@@ -279,11 +328,9 @@ export class GrassSystem {
       
       idx++;
     }
-    
-    return mesh;
   }
 
-  update(time, dt, playerPosition) {
+  update(time, dt, playerPosition, camera) {
     this.uniforms.uTime.value = time;
     
     if (playerPosition) {
@@ -311,6 +358,43 @@ export class GrassSystem {
         this.uniforms.uPlayerVel.value.copy(vel);
       }
       this.lastPlayerPos.copy(playerPosition);
+    }
+
+    if (camera) {
+      this.updateLOD(camera);
+    }
+  }
+
+  updateLOD(camera) {
+    // LOD Settings
+    const distHigh = 32;
+    const distLow = 64;
+    
+    // Reuse vector to prevent garbage collection
+    const chunkPos = new THREE.Vector3();
+    const camPos = camera.position;
+
+    // Check visibility frustum (optional, InstancedMesh does it too, but we can skip logic)
+    // For now, distance based LOD
+    
+    for (let chunk of this.chunks) {
+      chunkPos.copy(chunk.center);
+      chunkPos.y = 0; // Ignore height diff for LOD rings
+      const dist = chunkPos.distanceTo(new THREE.Vector3(camPos.x, 0, camPos.z));
+
+      if (dist < distHigh) {
+        // High Quality: Both meshes visible
+        chunk.meshBase.visible = true;
+        chunk.meshDetail.visible = true;
+      } else if (dist < distLow) {
+        // Medium Quality: Only base mesh
+        chunk.meshBase.visible = true;
+        chunk.meshDetail.visible = false;
+      } else {
+        // Low Quality: Nothing visible
+        chunk.meshBase.visible = false;
+        chunk.meshDetail.visible = false;
+      }
     }
   }
 }
