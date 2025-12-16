@@ -20,9 +20,10 @@ export class GrassSystem {
   createGrassMesh(getTerrainHeight) {
     // 1. Improved Geometry
     // Taller grass, more segments for smooth bending (curvature)
-    const grassHeight = 0.35; // Shorter base height
-    const grassWidth = 0.04;  // Thinner strands
-    const segments = 5; 
+    const grassHeight = 0.45; // Taller for more flow
+    const grassWidth = 0.03;  // Thin but visible
+    const segments = 6;       // Smoother bending
+    
     const grassGeo = new THREE.PlaneGeometry(grassWidth, grassHeight, 1, segments);
     grassGeo.translate(0, grassHeight / 2, 0); 
     
@@ -32,11 +33,15 @@ export class GrassSystem {
       const y = posAttribute.getY(i);
       const hNorm = y / grassHeight;
       
-      // Quadratic taper for leaf shape
-      const widthScale = 1.0 - Math.pow(hNorm, 1.8);
+      // Quadratic taper for leaf shape - sharper tip
+      const widthScale = 1.0 - Math.pow(hNorm, 2.0);
       
       const x = posAttribute.getX(i);
       posAttribute.setX(i, x * widthScale); 
+      
+      // Initial curve - bend along Z
+      const curve = hNorm * hNorm * 0.15;
+      posAttribute.setZ(i, posAttribute.getZ(i) - curve);
     }
     grassGeo.computeVertexNormals();
 
@@ -105,36 +110,39 @@ export class GrassSystem {
           // --- WIND ANIMATION ---
           float time = uTime * 0.8;
           // Combine multiple frequencies for turbulence
-          float swell = snoise(worldPos.xz * 0.04 + time * 0.3); // Large waves
-          float flutter = snoise(worldPos.xz * 0.6 + time * 1.8); // Small jitters
-          float windForce = swell * 0.7 + flutter * 0.3;
+          float swell = snoise(worldPos.xz * 0.05 + time * 0.4); 
+          float flutter = snoise(worldPos.xz * 0.8 + time * 2.0); 
+          float windForce = swell * 0.5 + flutter * 0.2;
           
           // Bend factor (zero at bottom, high at top)
-          float bend = pow(vHeight, 1.8);
+          float bend = pow(vHeight, 2.0);
           
-          transformed.x += windForce * bend * 0.4;
-          transformed.z += windForce * bend * 0.15;
-          transformed.y -= abs(windForce) * bend * 0.15; // Dip down on swing
+          transformed.x += windForce * bend * 0.5;
+          transformed.z += windForce * bend * 0.2;
+          transformed.y -= abs(windForce) * bend * 0.2; 
 
           // --- PLAYER INTERACTION ---
           float dist = distance(worldPos.xz, uPlayerPos.xz);
-          float radius = 1.0;
+          // Reduced radius to match feet better (0.65)
+          float radius = 0.65;
           if(dist < radius){
              float push = 1.0 - smoothstep(0.0, radius, dist);
+             push = pow(push, 2.0); // Non-linear falloff for impact feel
+             
              vec2 dir = normalize(worldPos.xz - uPlayerPos.xz);
              
-             // Strong push
-             transformed.x += dir.x * push * 1.2 * vHeight;
-             transformed.z += dir.y * push * 1.2 * vHeight;
+             // Strong push away
+             transformed.x += dir.x * push * 2.0 * vHeight;
+             transformed.z += dir.y * push * 2.0 * vHeight;
              
              // Flatten
-             transformed.y *= (1.0 - push * 0.7);
+             transformed.y *= (1.0 - push * 0.8);
           }
 
           // --- NORMAL TWEAKING (For fake volume lighting) ---
           // Mix normal with Up vector to simulate light scattering through volume
-          // and prevent harsh black backsides
-          objectNormal = normalize(mix(objectNormal, vec3(0.0, 1.0, 0.0), 0.4));
+          // 0.7 mix makes it very soft and "translucent" feeling
+          objectNormal = normalize(mix(objectNormal, vec3(0.0, 1.0, 0.0), 0.7));
           `
         );
 
@@ -147,8 +155,8 @@ export class GrassSystem {
           '#include <color_fragment>',
           `
           // Gradient from dark earth to lush green
-          vec3 bottomColor = vec3(0.1, 0.2, 0.02);
-          vec3 topColor = vec3(0.35, 0.65, 0.1);
+          vec3 bottomColor = vec3(0.05, 0.15, 0.02);
+          vec3 topColor = vec3(0.3, 0.6, 0.15);
           
           vec3 finalColor = mix(bottomColor, topColor, vHeight);
           
@@ -156,7 +164,7 @@ export class GrassSystem {
           finalColor *= vInstanceColor;
           
           // Ambient Occlusion Hack: Darken the very bottom significantly
-          finalColor *= smoothstep(-0.1, 0.2, vHeight);
+          finalColor *= smoothstep(-0.05, 0.2, vHeight);
 
           diffuseColor.rgb = finalColor;
           `
@@ -176,50 +184,45 @@ export class GrassSystem {
     });
     
     // 3. Instancing with Clumping
-    const instanceCount = 400000; // Much denser
+    const instanceCount = 800000; // Increased density significantly (800k)
     const mesh = new THREE.InstancedMesh(grassGeo, grassMat, instanceCount);
     mesh.receiveShadow = true;
     mesh.castShadow = false; // Performance optimization
 
     const dummy = new THREE.Object3D();
     const color = new THREE.Color();
-    const range = 200;
+    const range = 220; // Slightly wider range
 
     let idx = 0;
     while(idx < instanceCount) {
       const x = (Math.random() - 0.5) * range;
       const z = (Math.random() - 0.5) * range;
       
-      // No more gaps - fill all regions
-      // const n = noise(x, z);
-      // if (n < -0.3) continue;
-
       const y = getTerrainHeight(x, z);
       dummy.position.set(x, y, z);
       
       // Random rotation
       dummy.rotation.y = Math.random() * Math.PI * 2;
-      // Slight random tilt
-      dummy.rotation.x = (Math.random() - 0.5) * 0.3;
-      dummy.rotation.z = (Math.random() - 0.5) * 0.3;
+      // More random tilt for realistic unkempt look
+      dummy.rotation.x = (Math.random() - 0.5) * 0.5;
+      dummy.rotation.z = (Math.random() - 0.5) * 0.5;
 
       // Random scale - Varied height
-      const hScale = 0.6 + Math.random() * 1.0; // Height varies from 60% to 160%
-      const wScale = 0.8 + Math.random() * 0.4; // Width varies slightly
+      const hScale = 0.5 + Math.random() * 0.7; // Height varies
+      const wScale = 0.6 + Math.random() * 0.4; // Width varies
       dummy.scale.set(wScale, hScale, wScale);
       
       dummy.updateMatrix();
       mesh.setMatrixAt(idx, dummy.matrix);
       
-      // Color Variation (Patches of dry grass)
-      // Use noise for color patches too
-      const colorNoise = noise(x * 0.5, z * 0.5); 
-      if (colorNoise > 0.6) {
-         color.setHex(0xc0c070); // Drier/Yellowish
+      // Color Variation (Patches)
+      const colorNoise = noise(x * 0.05, z * 0.05); 
+      if (colorNoise > 0.5) {
+         color.setHex(0x90a060); // Dryish
       } else {
          // Green variance
-         const v = 0.8 + Math.random() * 0.4;
-         color.setRGB(v, v, v);
+         const v = 0.7 + Math.random() * 0.3;
+         color.setRGB(v, v + 0.1, v);
       }
       mesh.setColorAt(idx, color);
       
