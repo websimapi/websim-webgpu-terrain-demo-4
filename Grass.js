@@ -106,7 +106,8 @@ export class GrassSystem {
       uPlayerPos: { value: new THREE.Vector3(0, -100, 0) },
       uPlayerVel: { value: new THREE.Vector3(0, 0, 0) },
       uTrailMap: { value: null }, // Persistent trail texture
-      uTerrainSize: { value: 200.0 } // Size of the terrain square
+      uTerrainSize: { value: 200.0 }, // Size of the terrain square
+      uSunDir: { value: new THREE.Vector3(0.5, 1.0, 0.5).normalize() }
     };
     
     this.renderer = renderer;
@@ -402,6 +403,9 @@ export class GrassSystem {
 
     this.fillMesh(meshBase, 0, baseCount, startX, startZ, size, dummy, color);
     this.fillMesh(meshDetail, 0, detailCount, startX, startZ, size, dummy, color);
+
+    meshBase.instanceColor.needsUpdate = true;
+    meshDetail.instanceColor.needsUpdate = true;
 
     this.group.add(meshBase);
     this.group.add(meshDetail);
